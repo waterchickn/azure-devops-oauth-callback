@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Callback</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #0078d4, #106ebe);
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+        .success {
+            color: #4CAF50;
+        }
+        .error {
+            color: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="status">Processing authentication...</h1>
+        <p id="message">Please wait while we process your credentials.</p>
+    </div>
+
+    <script>
+        function handleAuth() {
+            try {
+                console.log('OAuth Callback called');
+                console.log('URL:', window.location.href);
+                
+                // Show status
+                document.getElementById('status').innerHTML = 'Processing authentication...';
+                document.getElementById('message').textContent = 'Analyzing URL parameters...';
+                
+                const urlParams = new URLSearchParams(window.location.search);
+                const hashParams = new URLSearchParams(window.location.hash.substring(1));
+                
+                console.log('URL Parameters:', urlParams.toString());
+                console.log('Hash Parameters:', hashParams.toString());
+                
+                // Check for errors
+                const error = urlParams.get('error') || hashParams.get('error');
+                const errorDescription = urlParams.get('error_description') || hashParams.get('error_description');
+                
+                if (error) {
+                    console.error('OAuth Error:', error, errorDescription);
+                    document.getElementById('status').innerHTML = 'Authentication failed';
+                    document.getElementById('status').className = 'error';
+                    document.getElementById('message').textContent = `Error: ${error} - ${errorDescription || 'Unknown error'}`;
+                    
+                    // Send error to parent window
+                    if (window.opener) {
+                        window.opener.postMessage({
+                            type: 'oauth_error',
+                            error: error,
+                            errorDescription: errorDescription
+                        }, '*');
+                        setTimeout(() => window.close(), 3000);
+                    }
+                    return;
+                }
+                
+                // Search for Access Token or ID Token
+                const accessToken = urlParams.get('access_token') || hashParams.get('access_token');
+                const idToken = urlParams.get('id_token') || hashParams.get('id_token');
+                const code = urlParams.get('code');
+                const state = urlParams.get('state') || hashParams.get('state');
+                
+                console.log('Found Tokens:', { accessToken: !!accessToken, idToken: !!idToken, code: !!code, state });
+                
+                if (accessToken || idToken || code) {
+                    document.getElementById('status').innerHTML = 'Authentication successful!';
+                    document.getElementById('status').className = 'success';
+                    document.getElementById('message').textContent = 'Transferring credentials to extension...';
+                    
+                    // Extract token data
+                    let userData = null;
+                    if (idToken) {
+                        try {
+                            // Decode ID Token (simple Base64 decoding without validation)
+                            const tokenParts = idToken.split('.');
+                            if (tokenParts.length === 3) {
+                                const payload = JSON.parse(atob(tokenParts[1].replace(/-/g, '+').replace(/_/g, '/')));
+                                userData = {
+                                    name: payload.name || payload.preferred_username || payload.email,
+                                    email: payload.email || payload.preferred_username,
+                                    id: payload.sub || payload.oid
+                                };
+                                console.log('User Data from ID Token:', userData);
+                            }
+                        } catch (e) {
+                            console.warn('Error decoding ID Token:', e);
+                        }
+                    }
+                    
+                    // Send success data to parent window
+                    if (window.opener) {
+                        const authData = {
+                            type: 'oauth_success',
+                            accessToken: accessToken,
+                            idToken: idToken,
+                            code: code,
+                            state: state,
+                            userData: userData
+                        };
+                        
+                        console.log('Sending Auth Data to Extension:', authData);
+                        window.opener.postMessage(authData, '*');
+                        
+                        // Close window after short delay
+                        setTimeout(() => {
+                            document.getElementById('message').textContent = 'Window will close...';
+                            window.close();
+                        }, 2000);
+                    } else {
+                        document.getElementById('message').textContent = 'Warning: Could not communicate with extension.';
+                    }
+                } else {
+                    console.warn('No tokens found in URL');
+                    document.getElementById('status').innerHTML = 'No authentication data found';
+                    document.getElementById('status').className = 'error';
+                    document.getElementById('message').textContent = 'No valid authentication data found in the URL.';
+                    
+                    if (window.opener) {
+                        window.opener.postMessage({
+                            type: 'oauth_error',
+                            error: 'no_token',
+                            errorDescription: 'No authentication data found in callback URL'
+                        }, '*');
+                        setTimeout(() => window.close(), 3000);
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Error in handleAuth:', error);
+                document.getElementById('status').innerHTML = 'Processing error';
+                document.getElementById('status').className = 'error';
+                document.getElementById('message').textContent = `Error processing authentication: ${error.message}`;
+                
+                if (window.opener) {
+                    window.opener.postMessage({
+                        type: 'oauth_error',
+                        error: 'processing_error',
+                        errorDescription: error.message
+                    }, '*');
+                    setTimeout(() => window.close(), 3000);
+                }
+            }
+        }
+        
+        // Process authentication when page is loaded
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', handleAuth);
+        } else {
+            handleAuth();
+        }
+        
+        // Additional: Event listener for messages from parent window
+        window.addEventListener('message', function(event) {
+            console.log('Callback page received message:', event.data);
+        });
+        
+        // Debug: Log all URL parameters
+        console.log('Complete URL:', window.location.href);
+        console.log('Search:', window.location.search);
+        console.log('Hash:', window.location.hash);
+    </script>
+</body>
+</html>
